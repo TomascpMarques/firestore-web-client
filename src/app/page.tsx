@@ -1,113 +1,295 @@
+"use client";
+
+import DialogFlow from "@/components/custom/dialog-flow";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { ToastAction } from "@/components/ui/toast";
+import { useToast } from "@/components/ui/use-toast";
+import { RoomMessage, db } from "@/lib/firebase";
+import { createMessage, getRoomData } from "@/lib/firebase/firestore";
+import bucketStorageAvatarImageLoader from "@/lib/images/loader";
+import { avatar_buckets } from "@/lib/paths";
+import { getUserName, utcTimeStringToDate } from "@/lib/utils";
+import {
+  DocumentData,
+  collection,
+  onSnapshot,
+  orderBy,
+  query,
+} from "firebase/firestore";
+import {
+  CableIcon,
+  CogIcon,
+  EraserIcon,
+  LoaderCircleIcon,
+  SearchIcon,
+  SendIcon,
+} from "lucide-react";
 import Image from "next/image";
 
-export default function Home() {
+import { useCallback, useState } from "react";
+import { useImmerReducer } from "use-immer";
+
+export default function Page() {
+  // setupFireMessageData().finally(() => console.log("AAA"));
+  // setupFireRoomData().finally(() => console.log("AAA"));
+
+  type Room = {
+    name: string;
+    messages: RoomMessage[];
+    metadata: DocumentData | null;
+  };
+
+  interface RoomSetName {
+    type: "SET ROOM NAME";
+    name: string;
+  }
+  interface RoomSetMessages {
+    type: "SET ROOM MESSAGES";
+    messages: RoomMessage[];
+  }
+  interface RoomSetMetadata {
+    type: "SET ROOM METADATA";
+    metadata: DocumentData;
+  }
+
+  type RoomActions = RoomSetName | RoomSetMessages | RoomSetMetadata;
+
+  const [room, dispatch] = useImmerReducer<Room, RoomActions>(
+    (draft, action) => {
+      switch (action.type) {
+        case "SET ROOM NAME":
+          draft.name = action.name;
+          break;
+        case "SET ROOM MESSAGES":
+          draft.messages = action.messages;
+          break;
+        case "SET ROOM METADATA":
+          draft.metadata = action.metadata;
+          break;
+      }
+    },
+    {
+      name: "",
+      messages: [],
+      metadata: null,
+    },
+  );
+
+  const setName = useCallback(
+    (name: string) => {
+      dispatch({ type: "SET ROOM NAME", name });
+    },
+    [dispatch],
+  );
+  const clearName = useCallback(() => {
+    dispatch({ type: "SET ROOM NAME", name: "" });
+  }, [dispatch]);
+
+  const [showIcon, setShowIcon] = useState<boolean>(false);
+
+  const { toast } = useToast();
+
+  async function getRoom() {
+    setShowIcon(true);
+
+    let room_data = await getRoomData("rooms/topic/definitions", room.name)
+      .catch((err) => {
+        toast({
+          title: "Erro",
+          description: "Falha ao obter dados da sala",
+          action: <ToastAction altText="Tentar de novo.">Retry</ToastAction>,
+        });
+      })
+      .finally(() => setShowIcon(false));
+
+    dispatch({
+      type: "SET ROOM METADATA",
+      metadata: room_data as DocumentData,
+    });
+    console.table(room_data);
+    setShowIcon(false);
+
+    await subscreverSala();
+    return;
+  }
+
+  async function subscreverSala() {
+    setShowIcon(true);
+
+    const msgQuery = query(
+      collection(db, `messages/rooms/${room.name}`),
+      orderBy("sent"),
+      // limit(25),
+    );
+
+    onSnapshot(msgQuery, (collection) => {
+      let msgs: RoomMessage[] = [];
+      collection.docs.forEach((x) => {
+        msgs.push(x.data() as RoomMessage);
+      });
+      dispatch({ type: "SET ROOM MESSAGES", messages: msgs });
+      toast({
+        title: "Sucesso!",
+        description: `Loaded ${msgs.length} messages.`,
+      });
+      setShowIcon(false);
+    });
+  }
+
+  const [conteudo, setConteudo] = useState("");
+
+  async function sendMessage() {
+    await createMessage(room.name, getUserName(), conteudo);
+    setConteudo("");
+  }
+
+  function createTimeStamp(sent: string): string {
+    let date = utcTimeStringToDate(sent);
+
+    return `${date.getDay()}/${date.getMonth()}/${date.getFullYear()} - ${date.getHours()}:${date.getMinutes()}`;
+  }
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:size-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
-      </div>
+    <main className="space-y-4">
+      <section className="w-fit flex flex-row gap-2 items-end p-6 bg-white mt-6 rounded-md border shadow-sm">
+        <section className="space-y-4">
+          <div className="grid w-full gap-1.5">
+            <Label>Nome da sala</Label>
+            <div className="flex flex-row gap-1.5 justify-center">
+              {room.name.length != 0 ? (
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  onClick={clearName}
+                  disabled={showIcon}
+                >
+                  <EraserIcon className="w-4 h-auto" />
+                </Button>
+              ) : (
+                <></>
+              )}
+              <Input
+                placeholder="Ciências"
+                type="text"
+                className="max-w-fit outline-none outline-0"
+                value={room.name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+          </div>
+        </section>
 
-      <div className="relative z-[-1] flex place-items-center before:absolute before:h-[300px] before:w-full before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 sm:before:w-[480px] sm:after:w-[240px] before:lg:h-[360px]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
-
-      <div className="mb-32 grid text-center lg:mb-0 lg:w-full lg:max-w-5xl lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
+        <Button
+          size="default"
+          className="flex flex-row items-center gap-1.5"
+          onClick={getRoom}
         >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
+          Buscar sala
+          {showIcon ? (
+            <LoaderCircleIcon width={16} className="animate-spin" />
+          ) : (
+            <SearchIcon width={"auto"} height={18} />
+          )}
+        </Button>
+        <Button
+          size="default"
+          className="flex flex-row items-center gap-1.5"
+          onClick={subscreverSala}
+          variant="secondary"
+          disabled
         >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
+          Subscrever sala
+          {showIcon ? (
+            <LoaderCircleIcon width={16} className="animate-spin" />
+          ) : (
+            <CableIcon width={"auto"} height={18} />
+          )}
+        </Button>
+      </section>
 
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-sm opacity-50">
-            Explore starter templates for Next.js.
-          </p>
-        </a>
+      <DialogFlow />
 
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className="mb-3 text-2xl font-semibold">
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className="m-0 max-w-[30ch] text-balance text-sm opacity-50">
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
+      {room.metadata !== null ? (
+        <Card className="min-w-[55vw] h-fit overflow-clip">
+          <CardHeader className="flex flex-row min-w-full justify-between items-center">
+            <section className="space-y-1.5">
+              <CardTitle>{room.metadata?.["nome"]}</CardTitle>
+              <CardDescription>
+                Users: {room.metadata?.["usr_count"]}
+              </CardDescription>
+            </section>
+            <Button
+              variant={"outline"}
+              className="flex flex-row items-center gap-1"
+            >
+              <CogIcon className="text-slate-800 h-5 w-auto" />
+              Settings
+            </Button>
+          </CardHeader>
+          <Separator />
+          <CardContent className="min-h-[45vh] max-h-[70vh] grid grid-rows-[4fr_auto] bg-white px-0 pb-0 ">
+            <section className="bg-slate-400 row-span-2 h-full overflow-y-scroll scroll-smooth snap-x snap-center">
+              <ul className="flex flex-col gap-3 py-4">
+                {room.messages.map((message, a) => (
+                  <li
+                    key={a}
+                    className="w-[25vw] flex flex-row gap-3 items-start justify-start mx-5  bg-white p-2 pt-3 px-1 rounded-md border shadow-sm"
+                  >
+                    <Avatar className="ml-2">
+                      <AvatarImage
+                        src={`${avatar_buckets}/users/avatar/${message.autor}`}
+                      />
+                      <AvatarFallback>
+                        <Image
+                          src={`Avatar`}
+                          loader={bucketStorageAvatarImageLoader}
+                          width={200}
+                          height={200}
+                          alt="AAA"
+                        />
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-sm mb-2 text-slate-400">
+                        {message.autor}
+                      </p>
+                      <p className="">{message.content}</p>
+                      <p className="text-sm text-slate-400 mt-3">
+                        {createTimeStamp(message.sent)}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+            <section className="h-min flex flex-row gap-3 items-start justify-start bg-slate-100/70 backdrop-blur-sm px-5 py-3">
+              <Input
+                placeholder="Message"
+                className="w-full"
+                type="text"
+                id="conteudo"
+                onChange={(e) => setConteudo(e.target.value)}
+              />
+              <Button size={"icon"} variant={"default"} onClick={sendMessage}>
+                <SendIcon width={18} />
+              </Button>
+            </section>
+          </CardContent>
+        </Card>
+      ) : (
+        <></>
+      )}
     </main>
   );
 }
